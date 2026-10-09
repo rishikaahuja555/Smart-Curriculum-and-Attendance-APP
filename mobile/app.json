@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "AIRS Teacher",
+    "slug": "airs-teacher",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "airs-teacher",
+    "userInterfaceStyle": "light",
+    "plugins": ["expo-router"],
+    "experiments": { "typedRoutes": true }
+  }
+}

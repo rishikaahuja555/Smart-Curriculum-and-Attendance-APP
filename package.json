@@ -1,0 +1,21 @@
+{
+  "name": "airs-smart-curriculum-attendance",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env scripts/dev.js",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node --env-file-if-exists=.env scripts/start.js",
+    "test": "node --test",
+    "demo:counts": "node scripts/count-tables.js",
+    "demo:cleanup": "node --env-file-if-exists=.env scripts/cleanup-demo.js"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "pg": "^8.23.1",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "^5.4.19"
+  }
+}
