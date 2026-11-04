@@ -263,6 +263,11 @@ function RecoveryAndCurriculum() { return <div className="two-col"><section clas
 function Activities() { return <section className="section-block activity-section"><div className="section-heading"><div><div className="eyebrow">Activities & conflicts</div><h2>Make room for what matters</h2></div><button className="text-btn">My activities <span>→</span></button></div><div className="activity-row"><div className="calendar-date"><strong>10</strong><span>SEP</span></div><div className="activity-info"><span className="activity-type">Academic activity</span><h3>National Hackathon</h3><p>September 10 · 10:00 AM – 4:00 PM</p></div><div className="conflict-box"><Status>Conflict detected</Status><strong>DBMS Session</strong><span>Topic: Normalization · Pending faculty approval</span></div><button className="outline-btn">Review impact <span>→</span></button></div></section>; }
 
 function StudentActivityRequests({ requests, onSubmit }) {
+  console.log('Activity request titles:', JSON.stringify(
+  requests.map(r => ({ title: r.title, id: r.id })),
+  null,
+  2
+));
   const [form, setForm] = useState({ title: '', date: new Date().toISOString().slice(0, 10), startTime: '09:00', endTime: '10:00', reason: '' });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -294,12 +299,17 @@ function StudentActivityRequests({ requests, onSubmit }) {
     </form>
     <section className="section-block activity-request-list">
       <div className="section-heading"><div><div className="eyebrow">My requests</div><h2>Activity review history</h2></div></div>
+      <p>DEBUG: Total requests = {requests.length}</p>
+      <p style={{color: 'red', fontSize: '20px'}}>DEBUG: Total requests = {requests.length}</p>
       {!requests.length && <p className="availability-empty">No activity requests yet.</p>}
-      {requests.map((request) => <article className="activity-request-row" key={request.id}>
-        <div className="activity-request-heading"><div><h3>{request.title}</h3><span>{request.date} · {request.startTime}–{request.endTime}</span></div><Status tone={request.status === 'Approved' ? 'green' : request.status === 'Declined' ? 'red' : 'amber'}>{request.status}</Status></div>
-        <p>{request.reason}</p>
-        {request.conflicts.length ? <ul>{request.conflicts.map((conflict, index) => <li key={`${conflict.type}-${index}`}>{conflict.type === 'class' ? `Class overlap: ${conflict.subject} · ${conflict.section} · ${conflict.startTime}–${conflict.endTime}` : conflict.type === 'faculty-unavailable' ? `Faculty unavailable: ${conflict.faculty} · ${conflict.startDate} to ${conflict.endDate}` : `Schedule time needs confirmation: ${conflict.subject} · ${conflict.section}`}</li>)}</ul> : <small>No class conflict detected; approved automatically.</small>}
-      </article>)}
+      {requests.map((request) => (
+  <article key={request.id} style={{border: '1px solid black', padding: '15px', margin: '10px 0'}}>
+    <h3>{request.title}</h3>
+    <p>{request.date}</p>
+    <p>{request.reason}</p>
+    <p>Status: {request.status}</p>
+  </article>
+))}
     </section>
   </>;
 }
@@ -1386,6 +1396,7 @@ function Index() {
   const submitActivityRequest = async (activity) => {
     const result = await apiRequest('/api/activity-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(activity) });
     setActivityRequests((current) => [result.request, ...current]);
+    console.log('Submitted activity request:', result.request);
     return result.request;
   };
   const reviewActivityRequest = async (requestId, decision) => {

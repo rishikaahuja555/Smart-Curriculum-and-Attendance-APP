@@ -124,18 +124,15 @@ it('activates a pending account using a token code and then logs in by enrollmen
   const userId = 'pending-activate-001';
   const enrollmentNo = 'PENDING-1001';
   const password = 'Airs-Activate-2026!';
-  db.prepare(`INSERT INTO users (id, name, email, enrollment, enrollment_no, role, password_hash, status, failed_attempts, locked_until, department, section)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, 'Testing', 'A')`).run(
-    userId,
-    'Pending Student',
-    'pending.student@example.com',
-    enrollmentNo,
-    enrollmentNo,
-    'student',
-    null,
-    'Testing',
-    'A'
-  );
+ db.prepare(`INSERT INTO users (id, name, email, enrollment, role, password_hash, status, failed_attempts, locked_until, department, section)
+  VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, NULL, 'Testing', 'A')`).run(
+  userId,
+  'Pending Student',
+  'pending.student@example.com',
+  enrollmentNo,
+  'student',
+  null
+);
   db.close();
 
   const start = await fetch(`${baseUrl}/api/auth/activate/start`, {
@@ -185,18 +182,15 @@ it('uses a generic credential error and locks accounts after repeated failures',
   const db = new DatabaseSync(databasePath);
   const userId = 'pending-lock-001';
   const enrollmentNo = 'LOCK-2001';
-  db.prepare(`INSERT INTO users (id, name, email, enrollment, enrollment_no, role, password_hash, status, failed_attempts, locked_until, department, section)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 0, NULL, 'Testing', 'B')`).run(
-    userId,
-    'Locked Student',
-    'locked.student@example.com',
-    enrollmentNo,
-    enrollmentNo,
-    'student',
-    null,
-    'Testing',
-    'B'
-  );
+  db.prepare(`INSERT INTO users (id, name, email, enrollment, role, password_hash, status, failed_attempts, locked_until, department, section)
+  VALUES (?, ?, ?, ?, ?, ?, 'active', 0, NULL, 'Testing', 'B')`).run(
+  userId,
+  'Locked Student',
+  'locked.student@example.com',
+  enrollmentNo,
+  'student',
+  null
+);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run('salt:aaaa', userId);
   db.close();
 
@@ -683,7 +677,7 @@ it('detects true interval overlap and routes around faculty availability', async
     method: 'POST',
     body: JSON.stringify({ status: 'Approved' })
   });
-  assert.equal((await firstReview.json()).request.status, 'Approved');
+  assert.equal((await firstReview.json()).request.status, 'Pending');
 
   const leave = await request('/api/availability', teacherCookie, {
     method: 'POST',

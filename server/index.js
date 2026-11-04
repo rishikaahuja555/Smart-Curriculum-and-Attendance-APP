@@ -38,7 +38,7 @@ if (process.env.NODE_ENV === 'production' && !process.env.AIRS_ADMIN_PASSWORD) {
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     enrollment TEXT UNIQUE COLLATE NOCASE,
     role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
-    password_hash TEXT NOT NULL,
+    password_hash TEXT,
     department TEXT,
     section TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -49,6 +49,15 @@ if (process.env.NODE_ENV === 'production' && !process.env.AIRS_ADMIN_PASSWORD) {
     expires_at INTEGER NOT NULL,
     display_name TEXT
   );
+  CREATE TABLE IF NOT EXISTS account_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL,
+  type TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  created_at INTEGER NOT NULL
+);
   CREATE TABLE IF NOT EXISTS schedule_items (
     id TEXT PRIMARY KEY,
     date TEXT NOT NULL,
@@ -223,6 +232,19 @@ if (!database.prepare('PRAGMA table_info(syllabus_topics)').all().some((column) 
   database.exec('ALTER TABLE syllabus_topics ADD COLUMN unit_id TEXT REFERENCES syllabus_units(id)');
 }
 database.exec('CREATE INDEX IF NOT EXISTS syllabus_topics_unit_idx ON syllabus_topics(unit_id, position)');
+const userColumns = database.prepare('PRAGMA table_info(users)').all();
+
+if (!userColumns.some((column) => column.name === 'status')) {
+  database.exec("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+}
+
+if (!userColumns.some((column) => column.name === 'failed_attempts')) {
+  database.exec('ALTER TABLE users ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0');
+}
+
+if (!userColumns.some((column) => column.name === 'locked_until')) {
+  database.exec('ALTER TABLE users ADD COLUMN locked_until INTEGER');
+}
 
 function hashPassword(password, salt = randomBytes(16).toString('hex')) {
   return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
@@ -331,8 +353,7 @@ function parseActivityRequest(row) {
     title: row.title,
     date: row.activity_date,
     startTime: row.start_time,
-    endTime: row.end_time,
-    reason: row.reason,
+    endTime: row.end_time,reason: row.reason,
     status: row.status,
     conflicts: JSON.parse(row.conflicts_json),
     reviews,
@@ -356,6 +377,7 @@ function attendanceTrend(records) {
   const previous = records.slice(-windowSize * 2, -windowSize);
   const recent = records.slice(-windowSize);
   const previousRate = previous.reduce((total, record) => total + attended(record), 0) / previous.length;
+
   const recentRate = recent.reduce((total, record) => total + attended(record), 0) / recent.length;
   return recentRate < previousRate - 0.05 ? 'down' : recentRate > previousRate + 0.05 ? 'up' : 'stable';
 }
@@ -770,8 +792,9 @@ registerAuthRoutes(apiRouter, {
   requireRole,
   randomBytes,
   createHash,
-  findUserByIdentifier,
+    findUserByIdentifier,
   verifyPassword,
+  hashPassword,
   publicUser,
   sessionHours,
   rememberMeSeconds,
@@ -1149,21 +1172,38 @@ async function handleApi(request, response, url) {
           AND availability_requests.status IN ('Pending', 'Approved')`).all(...affectedClassIds, date, date)
       : [];
     const unavailableIds = new Set(unavailableFaculty.map((item) => item.user_id));
+    const reviewerIds = new Set(
+  unavailableFaculty.length > 0
+    ? database.prepare(`
+        SELECT id FROM users
+        WHERE role = 'admin'
+      `).all().map((row) => row.id)
+    : database.prepare(`
+        SELECT DISTINCT sections.teacher_id
+        FROM enrollments
+        JOIN sections ON sections.id = enrollments.section_id
+        JOIN users AS faculty ON faculty.id = sections.teacher_id
+        WHERE enrollments.student_id = ?
+          AND faculty.role = 'teacher'
+      `).all(user.id).map((row) => row.teacher_id)
+);
+
+if (reviewerIds.size === 0) {
+  return send(response, 400, {
+    error: unavailableFaculty.length > 0
+      ? 'No administrator is available to review this request.'
+      : 'No faculty assigned to your enrolled sections. Please contact the administrator.'
+  });
+}
+
     const conflicts = [
       ...classConflicts.map((item) => ({ type: 'class', scheduleId: item.id, subject: item.subject, section: item.section, faculty: item.faculty_name || item.faculty, startTime: item.time, endTime: item.end_time })),
       ...unverifiedConflicts.map((item) => ({ type: 'schedule-time-missing', scheduleId: item.id, subject: item.subject, section: item.section, faculty: item.faculty_name || item.faculty, startTime: item.time })),
       ...unavailableFaculty.map((item) => ({ type: 'faculty-unavailable', faculty: item.name, startDate: item.start_date, endDate: item.end_date, status: item.status }))
     ];
-    const reviewerIds = new Set();
-    const adminId = database.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY CASE WHEN email LIKE '%@demo.airs.local' THEN 0 ELSE 1 END, id LIMIT 1").get()?.id;
-    for (const item of [...classConflicts, ...unverifiedConflicts]) {
-      if (item.faculty_id && !unavailableIds.has(item.faculty_id)) reviewerIds.add(item.faculty_id);
-      else if (adminId) reviewerIds.add(adminId);
-    }
-
     const id = randomBytes(16).toString('hex');
     const createdAt = new Date().toISOString();
-    const status = reviewerIds.size ? 'Pending' : 'Approved';
+    const status = conflicts.length === 0 ? 'Approved' : 'Pending';
     database.exec('BEGIN IMMEDIATE');
     try {
       database.prepare(`INSERT INTO activity_requests (id, student_id, title, activity_date, start_time, end_time,
@@ -1171,7 +1211,11 @@ async function handleApi(request, response, url) {
         .run(id, user.id, title, date, startTime, endTime, reason, status, JSON.stringify(conflicts), createdAt, status === 'Approved' ? createdAt : null);
       const insertReview = database.prepare(`INSERT INTO activity_request_reviews (request_id, reviewer_id, status)
         VALUES (?, ?, 'Pending')`);
-      for (const reviewerId of reviewerIds) insertReview.run(id, reviewerId);
+      if (status === 'Pending') {
+  for (const reviewerId of reviewerIds) {
+    insertReview.run(id, reviewerId);
+  }
+}
       insertAudit.run(randomBytes(16).toString('hex'), user.id, 'Activity request submitted', id, JSON.stringify({ date, startTime, endTime, conflictCount: conflicts.length, reviewers: [...reviewerIds] }), createdAt);
       database.exec('COMMIT');
     } catch (error) {
@@ -1181,7 +1225,7 @@ async function handleApi(request, response, url) {
     return send(response, 201, { request: parseActivityRequest(getActivityRequestById.get(id)), autoApproved: status === 'Approved' });
   }
 
-  const activityReviewMatch = url.pathname.match(/^\/api\/activity-requests\/([a-f0-9]+)\/review$/);
+  const activityReviewMatch = url.pathname.match(/^\/api\/activity-requests\/([^/]+)\/review$/);
   if (request.method === 'POST' && activityReviewMatch) {
     if (!requireRole(user, ['teacher', 'admin'])) return send(response, 403, { error: 'Faculty or administrator access required.' });
     const body = await readJson(request);
@@ -1206,9 +1250,25 @@ async function handleApi(request, response, url) {
       database.prepare(`UPDATE activity_request_reviews SET status = ?, decision_note = ?, reviewed_at = ?
         WHERE request_id = ? AND reviewer_id = ? AND status = 'Pending'`)
         .run(decision, String(body.note || '').trim() || null, reviewedAt, existing.id, user.id);
-      const declined = database.prepare(`SELECT 1 FROM activity_request_reviews WHERE request_id = ? AND status = 'Declined'`).get(existing.id);
-      const pending = database.prepare(`SELECT 1 FROM activity_request_reviews WHERE request_id = ? AND status = 'Pending'`).get(existing.id);
-      const requestStatus = declined ? 'Declined' : pending ? 'Pending' : 'Approved';
+
+
+      const declined = database.prepare(`
+        SELECT 1 FROM activity_request_reviews
+        WHERE request_id = ? AND status = 'Declined'
+      `).get(existing.id);
+
+      const pending = database.prepare(`
+        SELECT 1 FROM activity_request_reviews
+        WHERE request_id = ? AND status = 'Pending'
+      `).get(existing.id);
+
+      const requestStatus = declined
+        ? 'Declined'
+        : pending
+          ? 'Pending'
+          : 'Approved';
+
+
       database.prepare('UPDATE activity_requests SET status = ?, reviewed_at = ? WHERE id = ?')
         .run(requestStatus, requestStatus === 'Pending' ? null : reviewedAt, existing.id);
       insertAudit.run(randomBytes(16).toString('hex'), user.id, `Activity request ${decision.toLowerCase()}`, existing.id, JSON.stringify({ note: String(body.note || '').trim() }), reviewedAt);
@@ -1388,11 +1448,22 @@ const server = createServer(async (request, response) => {
   if (url.pathname.startsWith('/api/')) {
     try {
       await handleApi(request, response, url);
+
     } catch (error) {
-      console.error(error);
-      if (!response.headersSent) send(response, 400, { error: 'The request could not be completed.' });
-      else response.destroy();
+      console.error('ACTIVITY API ERROR:', error);
+
+      if (!response.headersSent) {
+        send(response, 400, {
+          error: 'The request could not be completed.',
+          details: process.env.NODE_ENV === 'production'
+            ? undefined
+            : error.message
+        });
+      } else {
+        response.destroy();
+      }
     }
+
     return;
   }
   if (process.env.NODE_ENV === 'production' && request.method === 'GET') return serveStatic(request, response, url);
