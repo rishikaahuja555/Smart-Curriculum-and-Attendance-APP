@@ -1,4 +1,4 @@
-# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
+# This workflow builds the app on supported Node.js versions and runs tests where node:sqlite is available.
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
 
 name: Node.js CI
@@ -11,13 +11,12 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
         node-version: [18.x, 20.x, 22.x]
-        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+        # The API tests use node:sqlite, which is only available in Node.js 22.
 
     steps:
     - uses: actions/checkout@v4
@@ -28,4 +27,6 @@ jobs:
         cache: 'npm'
     - run: npm ci
     - run: npm run build --if-present
-    - run: npm test
+    - name: Run tests (Node.js 22 only; required node:sqlite module)
+      if: matrix.node-version == '22.x'
+      run: npm test
