@@ -1,4 +1,3 @@
-
 export function calculateSafeAbsences(
   attended,
   total,
@@ -20,9 +19,10 @@ export function calculateSafeAbsences(
     throw new RangeError('Invalid attendance counts or required fraction.');
   }
 
-  const absencesAllowed =
-    Math.floor((attended + upcomingSessions) -
-      (requiredFraction * (total + upcomingSessions)));
+  const absencesAllowed = Math.floor(
+    attended + upcomingSessions - requiredFraction * (total + upcomingSessions)
+  );
 
-  return Math.max(0, absencesAllowed);
+  // A student cannot miss more sessions than are still scheduled.
+  return Math.min(upcomingSessions, Math.max(0, absencesAllowed));
 }
